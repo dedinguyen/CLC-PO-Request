@@ -163,7 +163,24 @@
     <h2>Who's this?</h2>
     <p>Your name shows on requests and notifies you when there's an update.</p>
     <div class="field">
-      <input id="nameInput" placeholder="First name" autocomplete="off" />
+      <select id="nameInput" onchange="setName()">
+        <option value="">Select your name…</option>
+        <option value="Danielle">Danielle</option>
+        <option value="Chris">Chris</option>
+        <option value="Dedi">Dedi</option>
+        <option value="Ryan">Ryan</option>
+        <option value="Ant">Ant</option>
+        <option value="Brandon">Brandon</option>
+        <option value="Scott">Scott</option>
+        <option value="Crystal">Crystal</option>
+        <option value="Adam">Adam</option>
+        <option value="Mike">Mike</option>
+        <option value="Russ">Russ</option>
+        <option value="Gabe">Gabe</option>
+        <option value="Austin">Austin</option>
+        <option value="Dennis">Dennis</option>
+        <option value="Eric">Eric</option>
+      </select>
     </div>
     <button class="btn primary" style="width:100%" onclick="setName()">Continue</button>
   </div>
@@ -181,6 +198,16 @@
     <button onclick="enablePush()">Enable</button>
   </div>
 
+  <div class="radio-row" id="filterBar" style="display:none;margin-bottom:14px">
+    <label><input type="radio" name="reqFilter" value="all" checked onchange="setFilter('all')" /><span>All requests</span></label>
+    <label><input type="radio" name="reqFilter" value="mine" onchange="setFilter('mine')" /><span>My requests</span></label>
+  </div>
+
+  <div class="radio-row" id="sortBar" style="display:none;margin-bottom:14px">
+    <label><input type="radio" name="reqSort" value="date" checked onchange="setSort('date')" /><span>Sort: Date</span></label>
+    <label><input type="radio" name="reqSort" value="job" onchange="setSort('job')" /><span>Sort: Job</span></label>
+  </div>
+
   <!-- NEW REQUEST -->
   <div class="view" id="view-new">
     <div class="field">
@@ -196,9 +223,12 @@
       <input id="amountInput" type="number" step="0.01" inputmode="decimal" placeholder="0.00" onblur="runBudgetCheck()" />
       <div class="budget-check" id="budgetCheck"></div>
     </div>
-    <div class="field">
+    <div class="field" style="position:relative">
       <label>Vendor</label>
-      <input id="vendorInput" placeholder="Vendor name" />
+      <input id="vendorInput" placeholder="Start typing vendor name…" autocomplete="off"
+        oninput="filterVendors()" onfocus="filterVendors()" />
+      <div id="vendorResults" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:40;background:#fff;border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;max-height:220px;overflow-y:auto;box-shadow:0 6px 16px rgba(0,0,0,.12)"></div>
+      <a href="#" id="vendorChangeLink" class="link-btn" style="display:none;margin-top:6px" onclick="clearVendorSelection();return false;">Change vendor</a>
     </div>
     <div class="field">
       <label>Pickup or delivery</label>
@@ -210,16 +240,20 @@
     <div class="field">
       <label>Needed onsite by</label>
       <input id="neededByInput" type="date" />
+      <div style="font-size:11px;color:#B9BEC4;margin-top:4px">Enter the day BEFORE you actually need it — pickups need lead time to get scheduled and run.</div>
     </div>
     <div class="field">
       <label>Photo or PDF of what you're ordering</label>
-      <input id="fileInput" type="file" accept="image/*,application/pdf" capture="environment" />
+      <input id="fileInput" type="file" accept="image/*,application/pdf" />
     </div>
     <div class="field">
-      <label>Notes (optional)</label>
+      <label id="notesLabel">Notes (optional)</label>
       <textarea id="notesInput" placeholder="Anything Danielle should know"></textarea>
     </div>
     <button class="btn primary" style="width:100%;padding:13px;font-size:15px" onclick="submitRequest()" id="submitBtn">Submit request</button>
+    <div style="text-align:center;margin-top:10px;display:none" id="cancelEditRow">
+      <a href="#" class="link-btn" onclick="cancelEdit();return false;">Cancel edit</a>
+    </div>
   </div>
 
   <!-- NEEDS APPROVAL -->
@@ -236,6 +270,9 @@
   <div class="view" id="view-complete">
     <div id="completeList"></div>
   </div>
+  <div class="view" id="view-delivered">
+    <div id="deliveredList"></div>
+  </div>
 </main>
 
 <nav class="tabs">
@@ -243,16 +280,18 @@
   <button data-view="pending" onclick="switchTab('pending')">Needs Approval<span class="count" id="countPending" style="display:none"></span></button>
   <button data-view="approved" onclick="switchTab('approved')">Approved<span class="count" id="countApproved" style="display:none"></span></button>
   <button data-view="complete" onclick="switchTab('complete')">Complete</button>
+  <button data-view="delivered" onclick="switchTab('delivered')">Delivered</button>
 </nav>
 
 <script>
-const APPROVERS = ['danielle','chris','dee dee'];
+const APPROVERS = ['danielle','chris','dedi'];
 const VAPID_PUBLIC_KEY = 'BMaDjnJZbbEfd2qIHmub7v_NhV-ux3O6Y6s6N9w19zthvDnxPiYfwVH3ZFNEx5xIZL3Jln0dsUNU-Npabe-6Wfc';
 // Reuse the same Cloudinary account already set up for CLC Dispatch
-const CLOUDINARY_CLOUD_NAME = '__CLOUDINARY_CLOUD_NAME__';
-const CLOUDINARY_UPLOAD_PRESET = '__CLOUDINARY_UPLOAD_PRESET__';
+const CLOUDINARY_CLOUD_NAME = 'atgobb8c';
+const CLOUDINARY_UPLOAD_PRESET = 'kanpyjxw';
 
 let selectedJobName = '';
+let editingRecordId = null;
 let selectedLineItemName = '';
 let lastBudgetCheck = null;
 let allRequests = [];
@@ -278,7 +317,21 @@ function switchTab(view){
   document.getElementById('view-'+view).classList.add('active');
   document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.remove('active'));
   document.querySelector('nav.tabs button[data-view="'+view+'"]').classList.add('active');
+  document.getElementById('filterBar').style.display = (view==='new') ? 'none' : 'flex';
+  document.getElementById('sortBar').style.display = (view==='new') ? 'none' : 'flex';
   if(view!=='new') refreshRequests();
+}
+
+let requestFilter = 'all';
+function setFilter(val){
+  requestFilter = val;
+  renderLists();
+}
+
+let requestSort = 'date';
+function setSort(val){
+  requestSort = val;
+  renderLists();
 }
 
 function toast(msg){
@@ -286,6 +339,49 @@ function toast(msg){
   t.className='toast'; t.textContent=msg;
   document.body.appendChild(t);
   setTimeout(()=>t.remove(), 2600);
+}
+
+let allVendors = [];
+let selectedVendorId = null;
+async function loadVendors(){
+  try{
+    const res = await fetch('/.netlify/functions/get-vendors');
+    const data = await res.json();
+    allVendors = data.vendors || [];
+  }catch(e){ /* filterVendors will just show nothing until this loads */ }
+}
+function filterVendors(){
+  if(document.getElementById('vendorInput').readOnly) return;
+  const q = document.getElementById('vendorInput').value.trim().toLowerCase();
+  selectedVendorId = null;
+  const box = document.getElementById('vendorResults');
+  if(!q){ box.style.display='none'; box.innerHTML=''; return; }
+  const matches = allVendors.filter(v=>v.name.toLowerCase().includes(q)).slice(0,8);
+  if(!matches.length){
+    box.innerHTML = '<div style="padding:10px 12px;color:var(--ink-soft);font-size:13.5px">No matching vendor - keep typing or check spelling</div>';
+    box.style.display='block';
+    return;
+  }
+  box.innerHTML = matches.map(v=>
+    `<div style="padding:10px 12px;font-size:14.5px;border-bottom:1px solid var(--line);cursor:pointer" onclick="selectVendor('${v.id}', '${v.name.replace(/'/g,"&#39;")}')">${v.name}</div>`
+  ).join('');
+  box.style.display='block';
+}
+function selectVendor(id, name){
+  selectedVendorId = id;
+  const input = document.getElementById('vendorInput');
+  input.value = name;
+  input.readOnly = true;
+  document.getElementById('vendorResults').style.display='none';
+  document.getElementById('vendorChangeLink').style.display='inline-block';
+}
+function clearVendorSelection(){
+  selectedVendorId = null;
+  const input = document.getElementById('vendorInput');
+  input.value = '';
+  input.readOnly = false;
+  document.getElementById('vendorChangeLink').style.display='none';
+  input.focus();
 }
 
 async function loadJobs(){
@@ -296,7 +392,7 @@ async function loadJobs(){
     sel.innerHTML = '<option value="">Select jobsite…</option>' +
       data.jobs.map(j=>`<option value="${j.id}" data-name="${j.name.replace(/"/g,'&quot;')}">${j.name}</option>`).join('');
   }catch(e){
-    sel.innerHTML = '<option value="">Couldn\\'t load jobs - reload page</option>';
+    sel.innerHTML = '<option value="">Couldn&#39;t load jobs - reload page</option>';
   }
 }
 
@@ -316,11 +412,30 @@ async function onJobChange(){
   try{
     const res = await fetch('/.netlify/functions/get-cost-items?jobId='+encodeURIComponent(jobId));
     const data = await res.json();
-    lineSel.innerHTML = '<option value="">Select line item…</option>' +
-      data.lineItems.map(li=>`<option value="${li.id}" data-name="${li.name.replace(/"/g,'&quot;')}">${li.costCode ? li.costCode+' — ' : ''}${li.name}</option>`).join('');
+
+    // Group line items under their cost code so the list reads like the
+    // actual budget hierarchy instead of one long flat scroll.
+    const groups = {};
+    const groupOrder = [];
+    data.lineItems.forEach(li=>{
+      const key = li.costCode || 'Other';
+      if(!groups[key]){ groups[key]=[]; groupOrder.push(key); }
+      groups[key].push(li);
+    });
+
+    let html = '<option value="">Select line item…</option>';
+    groupOrder.forEach(key=>{
+      html += `<optgroup label="${key.replace(/"/g,'&quot;')}">`;
+      groups[key].forEach(li=>{
+        html += `<option value="${li.id}" data-name="${li.name.replace(/"/g,'&quot;')}">${li.name}</option>`;
+      });
+      html += '</optgroup>';
+    });
+
+    lineSel.innerHTML = html;
     lineSel.disabled = false;
   }catch(e){
-    lineSel.innerHTML = '<option value="">Couldn\\'t load line items</option>';
+    lineSel.innerHTML = '<option value="">Couldn&#39;t load line items</option>';
   }
 }
 
@@ -335,7 +450,8 @@ async function runBudgetCheck(){
   const costItemId = document.getElementById('lineSelect').value;
   const amount = document.getElementById('amountInput').value;
   const box = document.getElementById('budgetCheck');
-  if(!costItemId || !amount){ box.className='budget-check'; lastBudgetCheck=null; return; }
+  const notesLabel = document.getElementById('notesLabel');
+  if(!costItemId || !amount){ box.className='budget-check'; lastBudgetCheck=null; notesLabel.textContent='Notes (optional)'; return; }
   box.className='budget-check loading';
   box.textContent = 'Checking budget…';
   try{
@@ -344,10 +460,12 @@ async function runBudgetCheck(){
     lastBudgetCheck = data;
     if(data.inBudget){
       box.className='budget-check ok';
-      box.textContent = `IN BUDGET — $${data.remaining.toFixed(2)} remaining on this line`;
+      box.textContent = 'IN BUDGET';
+      notesLabel.textContent = 'Notes (optional)';
     }else{
       box.className='budget-check bad';
-      box.textContent = `OVER BUDGET — only $${data.remaining.toFixed(2)} remaining on this line`;
+      box.textContent = 'OVER BUDGET';
+      notesLabel.textContent = 'Reason for going over budget (required)';
     }
   }catch(e){
     box.className='budget-check';
@@ -365,6 +483,9 @@ async function uploadAttachment(){
     method:'POST', body: form
   });
   const data = await res.json();
+  if(!res.ok || data.error){
+    throw new Error('Cloudinary: ' + (data.error ? data.error.message : ('HTTP '+res.status)));
+  }
   return data.secure_url || null;
 }
 
@@ -381,9 +502,18 @@ async function submitRequest(){
     toast('Fill in jobsite, line item, amount, and vendor');
     return;
   }
+  if(!selectedVendorId){
+    toast('Pick the vendor from the dropdown list, not just typed text');
+    return;
+  }
+  if(lastBudgetCheck && lastBudgetCheck.inBudget===false && !notes){
+    toast('This is over budget - add a reason in the Notes field before submitting');
+    return;
+  }
 
   const btn = document.getElementById('submitBtn');
-  btn.disabled = true; btn.textContent = 'Submitting…';
+  const isEditing = !!editingRecordId;
+  btn.disabled = true; btn.textContent = isEditing ? 'Saving…' : 'Submitting…';
 
   try{
     let attachmentUrl = null;
@@ -391,33 +521,82 @@ async function submitRequest(){
       attachmentUrl = await uploadAttachment();
     }
 
-    const res = await fetch('/.netlify/functions/submit-request', {
+    const endpoint = isEditing ? '/.netlify/functions/update-request' : '/.netlify/functions/submit-request';
+    const payload = isEditing
+      ? { recordId: editingRecordId, actorName: myName(),
+          jobId, jobName: selectedJobName, costItemId, lineItemName: selectedLineItemName,
+          amount, vendor, vendorId: selectedVendorId, fulfillment, neededBy, attachmentUrl, notes }
+      : { jobId, jobName: selectedJobName, costItemId, lineItemName: selectedLineItemName,
+          amount, vendor, vendorId: selectedVendorId, fulfillment, neededBy, requestedBy: myName(), attachmentUrl, notes };
+
+    const res = await fetch(endpoint, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        jobId, jobName: selectedJobName,
-        costItemId, lineItemName: selectedLineItemName,
-        amount, vendor, fulfillment, neededBy,
-        requestedBy: myName(),
-        attachmentUrl, notes
-      })
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
     if(!res.ok) throw new Error(data.error || 'Failed');
 
-    toast(data.inBudget ? 'Request submitted - in budget' : 'Request submitted - flagged over budget');
+    toast(data.inBudget
+      ? (isEditing ? 'Request updated - in budget' : 'Request submitted - in budget')
+      : (isEditing ? 'Request updated - flagged over budget' : 'Request submitted - flagged over budget'));
+    document.getElementById('jobSelect').value='';
+    document.getElementById('lineSelect').innerHTML = '<option value="">Select a job first</option>';
+    document.getElementById('lineSelect').disabled = true;
     document.getElementById('amountInput').value='';
     document.getElementById('vendorInput').value='';
+    document.getElementById('vendorInput').readOnly = false;
+    document.getElementById('vendorChangeLink').style.display='none';
+    selectedVendorId = null;
     document.getElementById('neededByInput').value='';
     document.getElementById('notesInput').value='';
+    document.getElementById('notesLabel').textContent = 'Notes (optional)';
     document.getElementById('fileInput').value='';
     document.getElementById('budgetCheck').className='budget-check';
+    cancelEdit();
     switchTab('pending');
   }catch(e){
     toast('Error: '+e.message);
   }finally{
-    btn.disabled=false; btn.textContent='Submit request';
+    btn.disabled=false; btn.textContent = editingRecordId ? 'Save changes' : 'Submit request';
   }
+}
+
+async function startEdit(recordId){
+  const r = allRequests.find(x=>x.id===recordId);
+  if(!r) return;
+  editingRecordId = recordId;
+  switchTab('new');
+  document.getElementById('submitBtn').textContent = 'Save changes';
+  document.getElementById('cancelEditRow').style.display = 'block';
+
+  document.getElementById('amountInput').value = r.Amount || '';
+  document.getElementById('vendorInput').value = r.Vendor || '';
+  selectedVendorId = r['Vendor ID'] || null;
+  document.getElementById('vendorInput').readOnly = !!selectedVendorId;
+  document.getElementById('vendorChangeLink').style.display = selectedVendorId ? 'inline-block' : 'none';
+  document.getElementById('neededByInput').value = r['Needed By'] || '';
+  document.getElementById('notesInput').value = r.Notes || '';
+  const fulfillmentRadio = document.querySelector(`input[name="fulfillment"][value="${r.Fulfillment||'Pickup'}"]`);
+  if(fulfillmentRadio) fulfillmentRadio.checked = true;
+
+  // Jobs list should already be loaded from init(); wait briefly if not
+  const jobSel = document.getElementById('jobSelect');
+  if(jobSel.options.length <= 1){ await loadJobs(); }
+  jobSel.value = r['Job ID'] || '';
+  selectedJobName = r['Job Name'] || '';
+  await onJobChange();
+
+  const lineSel = document.getElementById('lineSelect');
+  lineSel.value = r['Cost Item ID'] || '';
+  selectedLineItemName = r['Budget Line Item'] || '';
+  runBudgetCheck();
+}
+
+function cancelEdit(){
+  editingRecordId = null;
+  document.getElementById('submitBtn').textContent = 'Submit request';
+  document.getElementById('cancelEditRow').style.display = 'none';
 }
 
 function money(n){ return '$'+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -432,17 +611,23 @@ function ticketHTML(r, kind){
   if(r.Status==='Needs Info') statusBadge = '<span class="badge red">Needs info</span>';
   if(r.Status==='Approved') statusBadge = '<span class="badge green">Approved</span>';
   if(r.Status==='PO Assigned') statusBadge = `<span class="badge blue">PO #${r['PO Number']||''}</span>`;
+  if(r.Status==='En Route') statusBadge = `<span class="badge blue">En route - PO #${r['PO Number']||''}</span>`;
+  if(r.Status==='Delivered') statusBadge = '<span class="badge green">Delivered</span>';
   if(r.Status==='Rejected') statusBadge = '<span class="badge red">Rejected</span>';
 
   let attachmentLink = r.Attachment && r.Attachment[0]
     ? `<a class="link-btn" href="${r.Attachment[0].url}" target="_blank">View attachment</a>` : '';
 
   let actions = '';
+  const isMine = (r['Requested By']||'').toLowerCase().trim() === myName().toLowerCase().trim();
   if(kind==='pending' && isApprover()){
     actions = `
       <button class="btn primary small" onclick="doAction('${r.id}','approve')">Approve</button>
       <button class="btn ghost small" onclick="doNeedsInfo('${r.id}')">Needs info</button>
       <button class="btn danger small" onclick="doReject('${r.id}')">Reject</button>`;
+  }
+  if(kind==='pending' && isMine){
+    actions += `<button class="btn ghost small" onclick="startEdit('${r.id}')">Edit</button>`;
   }
   if(kind==='approved'){
     actions = `
@@ -522,9 +707,24 @@ async function refreshRequests(){
 }
 
 function renderLists(){
-  const pending = allRequests.filter(r=>r.Status==='Pending Review' || r.Status==='Needs Info');
-  const approved = allRequests.filter(r=>r.Status==='Approved');
-  const complete = allRequests.filter(r=>r.Status==='PO Assigned' || r.Status==='Rejected');
+  const scoped = requestFilter==='mine'
+    ? allRequests.filter(r => (r['Requested By']||'').toLowerCase().trim() === myName().toLowerCase().trim())
+    : allRequests;
+
+  let pending = scoped.filter(r=>r.Status==='Pending Review' || r.Status==='Needs Info');
+  const approved = scoped.filter(r=>r.Status==='Approved');
+  let complete = scoped
+    .filter(r=>r.Status==='PO Assigned' || r.Status==='En Route' || r.Status==='Rejected')
+    .sort((a,b)=> new Date(b['Status Updated At']||0) - new Date(a['Status Updated At']||0));
+  const delivered = scoped
+    .filter(r=>r.Status==='Delivered')
+    .sort((a,b)=> new Date(b['Status Updated At']||0) - new Date(a['Status Updated At']||0));
+
+  if(requestSort==='job'){
+    const byJob = (a,b) => (a['Job Name']||'').localeCompare(b['Job Name']||'');
+    pending = [...pending].sort(byJob);
+    complete = [...complete].sort(byJob);
+  }
 
   document.getElementById('pendingList').innerHTML = pending.length
     ? pending.map(r=>ticketHTML(r,'pending')).join('')
@@ -537,6 +737,10 @@ function renderLists(){
   document.getElementById('completeList').innerHTML = complete.length
     ? complete.map(r=>ticketHTML(r,'complete')).join('')
     : '<div class="empty">No completed requests yet.</div>';
+
+  document.getElementById('deliveredList').innerHTML = delivered.length
+    ? delivered.map(r=>ticketHTML(r,'delivered')).join('')
+    : '<div class="empty">Nothing marked delivered yet.</div>';
 
   const countPending = document.getElementById('countPending');
   const countApproved = document.getElementById('countApproved');
@@ -574,14 +778,20 @@ async function enablePush(){
     document.getElementById('notifyStrip').style.display='none';
     localStorage.setItem('clc_po_push_enabled','1');
     toast('Notifications on');
-  }catch(e){ toast('Couldn\\'t enable notifications: '+e.message); }
+  }catch(e){ toast('Couldn&#39;t enable notifications: '+e.message); }
 }
 
 function init(){
   document.getElementById('whoName').textContent = myName();
   loadJobs();
+  loadVendors();
   refreshRequests();
-  setInterval(refreshRequests, 30000);
+  setInterval(()=>{ if(document.visibilityState==='visible') refreshRequests(); }, 90000);
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='visible' && document.querySelector('nav.tabs button.active').dataset.view!=='new'){
+      refreshRequests();
+    }
+  });
   if(!localStorage.getItem('clc_po_push_enabled')){
     document.getElementById('notifyStrip').style.display='flex';
   }
